@@ -13,12 +13,12 @@ import time
 from typing import Optional, Tuple, List
 
 
-SIGNAL_DIR = "/tmp/ai_sleep_guard"
+SIGNAL_DIR = os.path.expanduser("~/.local/state/ai_sleep_guard")
 
 
 def ensure_signal_dir() -> str:
     """Ensures the temporary signal directory exists and returns its path."""
-    os.makedirs(SIGNAL_DIR, exist_ok=True)
+    os.makedirs(SIGNAL_DIR, mode=0o700, exist_ok=True)
     return SIGNAL_DIR
 
 

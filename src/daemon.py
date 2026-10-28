@@ -27,8 +27,9 @@ from src.telemetry import record_event
 
 logger = logging.getLogger(__name__)
 
-STATUS_FILE = "/tmp/ai_sleep_guard/status.json"
-PID_FILE = "/tmp/ai_sleep_guard/daemon.pid"
+STATE_DIR = os.path.expanduser("~/.local/state/ai_sleep_guard")
+STATUS_FILE = os.path.join(STATE_DIR, "status.json")
+PID_FILE = os.path.join(STATE_DIR, "daemon.pid")
 
 
 class SleepGuardDaemon:
