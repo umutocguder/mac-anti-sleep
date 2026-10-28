@@ -16,4 +16,5 @@ SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 PROJECT_ROOT="$(cd -P "${SCRIPT_DIR}/.." && pwd)"
 
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
-exec /usr/bin/python3 "${PROJECT_ROOT}/src/cli.py" "$@"
+cd "${PROJECT_ROOT}"
+exec /usr/bin/python3 -m src.cli "$@"
