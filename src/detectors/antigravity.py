@@ -12,7 +12,7 @@ import sqlite3
 import time
 from typing import Tuple, Dict, Any, Optional
 
-from .base import is_signal_active, get_file_age_seconds
+from src.detectors.base import is_signal_active, get_file_age_seconds
 
 
 ANTIGRAVITY_DIR = os.path.expanduser("~/.gemini/antigravity")

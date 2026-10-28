@@ -15,7 +15,7 @@ import subprocess
 import time
 from typing import Optional, Dict, Any
 
-from .telemetry import record_event
+from src.telemetry import record_event
 
 logger = logging.getLogger(__name__)
 

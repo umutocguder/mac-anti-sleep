@@ -10,7 +10,7 @@ Monitors signal flags, active Codex CLI / App-server processes, child tools, and
 import os
 from typing import Tuple, Dict, Any
 
-from .base import (
+from src.detectors.base import (
     is_signal_active,
     get_file_age_seconds,
     get_process_pids,

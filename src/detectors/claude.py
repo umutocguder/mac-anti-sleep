@@ -11,7 +11,7 @@ import os
 import time
 from typing import Tuple, Dict, Any
 
-from .base import (
+from src.detectors.base import (
     is_signal_active,
     get_file_age_seconds,
     get_process_pids,

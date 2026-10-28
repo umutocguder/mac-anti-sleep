@@ -15,8 +15,8 @@ import subprocess
 import sys
 import time
 
-from .daemon import SleepGuardDaemon, STATUS_FILE, PID_FILE
-from .detectors import (
+from src.daemon import SleepGuardDaemon, STATUS_FILE, PID_FILE
+from src.detectors import (
     set_signal_active,
     clear_signal,
     is_signal_active,
@@ -24,7 +24,7 @@ from .detectors import (
     check_claude_activity,
     check_codex_activity
 )
-from .caffeinate_manager import CaffeinateManager
+from src.caffeinate_manager import CaffeinateManager
 
 logging.basicConfig(
     level=logging.INFO,

@@ -15,15 +15,15 @@ import sys
 import time
 from typing import Dict, Any
 
-from .caffeinate_manager import CaffeinateManager
-from .detectors import (
+from src.caffeinate_manager import CaffeinateManager
+from src.detectors import (
     ensure_signal_dir,
     is_signal_active,
     check_antigravity_activity,
     check_claude_activity,
     check_codex_activity
 )
-from .telemetry import record_event
+from src.telemetry import record_event
 
 logger = logging.getLogger(__name__)
 
