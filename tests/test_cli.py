@@ -50,7 +50,7 @@ class TestCLI(unittest.TestCase):
         self.assertFalse(active)
 
     def test_cli_status_output(self):
-        """Verifies status command runs without exceptions."""
+        """Verifies status command runs without exceptions and displays health checks."""
         with patch("sys.argv", ["ai-sleep-guard", "status"]), patch("sys.stdout", new=io.StringIO()) as fake_out:
             main()
             output = fake_out.getvalue()
@@ -58,6 +58,24 @@ class TestCLI(unittest.TestCase):
             self.assertIn("Antigravity", output)
             self.assertIn("Claude Code", output)
             self.assertIn("OpenAI Codex", output)
+            self.assertIn("Thermal Protection", output)
+            self.assertIn("Lid-Close Sleep Guard", output)
+
+    def test_cli_thermal_output(self):
+        """Verifies thermal diagnostics command outputs required sections."""
+        with patch("sys.argv", ["ai-sleep-guard", "thermal"]), patch("sys.stdout", new=io.StringIO()) as fake_out:
+            main()
+            output = fake_out.getvalue()
+            self.assertIn("Thermal Diagnostics", output)
+            self.assertIn("macOS Thermal State", output)
+            self.assertIn("Overheating Status", output)
+
+    def test_cli_setup_sudo_output(self):
+        """Verifies setup-sudo command outputs instructions or success message."""
+        with patch("sys.argv", ["ai-sleep-guard", "setup-sudo"]), patch("sys.stdout", new=io.StringIO()) as fake_out:
+            main()
+            output = fake_out.getvalue()
+            self.assertIn("Sudoers Configuration", output)
 
 
 if __name__ == "__main__":

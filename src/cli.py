@@ -4,10 +4,12 @@
 
 """
 Command-Line Interface (CLI) for mac-anti-sleep / ai-sleep-guard.
-Provides commands for status reporting, manual overrides, daemon execution, and command wrapping.
+Provides commands for status reporting, manual overrides, daemon execution,
+thermal health diagnostics, sudoers setup, and command wrapping.
 """
 
 import argparse
+import getpass
 import json
 import logging
 import os
@@ -25,6 +27,8 @@ from src.detectors import (
     check_codex_activity
 )
 from src.caffeinate_manager import CaffeinateManager
+from src.clamshell_manager import ClamshellManager
+from src.thermal import ThermalGuard
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,13 +41,14 @@ def cmd_daemon(args: argparse.Namespace) -> None:
     """Runs the persistent background daemon."""
     daemon = SleepGuardDaemon(
         poll_interval=args.poll_interval,
-        cooldown_seconds=args.cooldown
+        cooldown_seconds=args.cooldown,
+        enable_clamshell=not args.no_clamshell
     )
     daemon.run()
 
 
 def cmd_status(args: argparse.Namespace) -> None:
-    """Displays real-time status of detectors, agents, and caffeinate assertions."""
+    """Displays real-time status of detectors, thermal guard, and sleep assertions."""
     print("=" * 64)
     print("  🌙 11Hopem AI Sleep Guard — Live Status")
     print("=" * 64)
@@ -55,7 +60,6 @@ def cmd_status(args: argparse.Namespace) -> None:
         try:
             with open(PID_FILE, "r") as f:
                 daemon_pid = int(f.read().strip())
-            # Check if alive
             os.kill(daemon_pid, 0)
             daemon_running = True
         except (ValueError, OSError):
@@ -72,9 +76,40 @@ def cmd_status(args: argparse.Namespace) -> None:
         "\033[90m○ Normal Display Sleep Allowed\033[0m"
     )
     print(f"Screen Sleep Status:  {display_badge}")
+
+    # 3. Check Clamshell / Lid-Closed Sleep Prevention
+    clamshell = ClamshellManager()
+    clam_status = clamshell.get_status()
+    if clam_status["clamshell_preventing_sleep"]:
+        clam_badge = "\033[92m● ACTIVE (Lid-closed will NOT sleep)\033[0m"
+    elif clam_status["sudoers_configured"]:
+        clam_badge = "\033[96m○ READY (Sudoers configured)\033[0m"
+    else:
+        clam_badge = "\033[93m△ REQUIRES SUDOERS SETUP (Run: ai-sleep-guard setup-sudo)\033[0m"
+    print(f"Lid-Close Sleep Guard:{clam_badge}")
+
+    # 4. Thermal Safety Status
+    thermal = ThermalGuard()
+    therm_status = thermal.get_thermal_status()
+    code = therm_status.get("thermal_state_code", 0)
+    name = therm_status.get("thermal_state_name", "Unknown")
+
+    if code == 0:
+        therm_badge = f"\033[92m● SAFE ({name})\033[0m"
+    elif code == 1:
+        therm_badge = f"\033[93m● FAIR ({name})\033[0m"
+    elif code == 2:
+        therm_badge = f"\033[91m▲ SERIOUS (High Temp)\033[0m"
+    else:
+        therm_badge = f"\033[91;1m🔴 CRITICAL (Emergency Halt)\033[0m"
+
+    cpu_lim = therm_status.get("cpu_speed_limit")
+    if cpu_lim is not None:
+        therm_badge += f" | CPU Limit: {cpu_lim}%"
+    print(f"Thermal Protection:   {therm_badge}")
     print("-" * 64)
 
-    # 3. Live Detectors
+    # 5. Live Detectors
     ag_active, ag_det = check_antigravity_activity()
     cl_active, cl_det = check_claude_activity()
     cx_active, cx_det = check_codex_activity()
@@ -93,7 +128,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 
     print("-" * 64)
 
-    # 4. Snapshot File Details
+    # 6. Snapshot File Details
     if os.path.exists(STATUS_FILE):
         try:
             with open(STATUS_FILE, "r") as f:
@@ -106,9 +141,68 @@ def cmd_status(args: argparse.Namespace) -> None:
             cooldown_left = caff.get("cooldown_remaining_seconds", 0)
             if cooldown_left > 0 and not (ag_active or cl_active or cx_active or manual_active):
                 print(f"Cooldown Buffer:      {cooldown_left}s remaining before sleep restored")
+            if snap.get("emergency_thermal_halt"):
+                print("\033[91;1m⚠️ WARNING: System recently executed an Emergency Thermal Halt!\033[0m")
         except Exception:
             pass
 
+    print("=" * 64)
+
+
+def cmd_thermal(args: argparse.Namespace) -> None:
+    """Displays detailed thermal pressure and CPU limits."""
+    tg = ThermalGuard()
+    status = tg.get_thermal_status()
+    pmset_raw = tg.query_pmset_thermal().get("raw_output", "")
+
+    print("=" * 64)
+    print("  🌡️ 11Hopem AI Sleep Guard — Thermal Diagnostics")
+    print("=" * 64)
+    print(f"macOS Thermal State:  {status['thermal_state_name']} (Code {status['thermal_state_code']})")
+    print(f"Overheating Status:   {'YES (Action Required)' if status['is_overheating'] else 'NO (Normal)'}")
+    print(f"Critical Danger:      {'YES' if status['is_critical'] else 'NO'}")
+    print(f"Thermal Lockout:      {'ACTIVE' if status['lockout_active'] else 'INACTIVE'}")
+    if status['cpu_speed_limit'] is not None:
+        print(f"CPU Speed Limit:      {status['cpu_speed_limit']}%")
+    print("-" * 64)
+    print("Raw pmset therm output:")
+    print(pmset_raw if pmset_raw else "  (No warnings recorded)")
+    print("=" * 64)
+
+
+def cmd_setup_sudo(args: argparse.Namespace) -> None:
+    """Installs or displays instructions for passwordless pmset sudoers configuration."""
+    current_user = getpass.getuser()
+    sudoers_path = "/etc/sudoers.d/ai-sleep-guard"
+    sudoers_rule = f"{current_user} ALL=(ALL) NOPASSWD: /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0, /usr/bin/pmset -g, /usr/bin/pmset sleepnow\n"
+
+    print("=" * 64)
+    print("  ⚙️ 11Hopem AI Sleep Guard — Sudoers Configuration")
+    print("=" * 64)
+
+    # Check if already working
+    cm = ClamshellManager()
+    if cm.can_manage_clamshell():
+        print("\033[92m● Sudoers is already configured correctly!\033[0m")
+        print("ai-sleep-guard can manage lid-closed sleep prevention seamlessly.")
+        return
+
+    # Attempt to write if currently running as root, or provide the exact command
+    if os.geteuid() == 0:
+        try:
+            with open(sudoers_path, "w", encoding="utf-8") as f:
+                f.write(sudoers_rule)
+            os.chmod(sudoers_path, 0o440)
+            print(f"\033[92m● Successfully wrote configuration to {sudoers_path}\033[0m")
+        except Exception as e:
+            print(f"Failed to write {sudoers_path}: {e}")
+    else:
+        print("To enable lid-close sleep prevention without typing your password every time,")
+        print("run the following single command in Terminal:")
+        print()
+        print(f'  echo "{sudoers_rule.strip()}" | sudo tee {sudoers_path} > /dev/null && sudo chmod 0440 {sudoers_path}')
+        print()
+        print("After running this, ai-sleep-guard will manage clamshell mode automatically!")
     print("=" * 64)
 
 
@@ -127,7 +221,7 @@ def cmd_done(args: argparse.Namespace) -> None:
 def cmd_on(args: argparse.Namespace) -> None:
     """Manually enables sleep prevention override."""
     set_signal_active("manual")
-    print(f"Manual sleep prevention ENABLED. Screen will stay awake.")
+    print("Manual sleep prevention ENABLED. Screen and system will stay awake.")
 
 
 def cmd_off(args: argparse.Namespace) -> None:
@@ -145,7 +239,6 @@ def cmd_wrap(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     set_signal_active(agent)
-    # Also start temporary caffeinate process just in case daemon is not running
     mgr = CaffeinateManager()
     mgr.start(reason=f"wrapped: {' '.join(cmd)}")
 
@@ -160,7 +253,7 @@ def cmd_wrap(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="ai-sleep-guard",
-        description="Prevents Mac display sleep while AI agents (Antigravity, Claude, Codex) run prompts."
+        description="Prevents Mac sleep while AI agents run prompts, with thermal safety and lid-close support."
     )
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
@@ -168,9 +261,16 @@ def main() -> None:
     daemon_parser = subparsers.add_parser("daemon", help="Run the background sleep guard daemon")
     daemon_parser.add_argument("--poll-interval", type=float, default=2.5, help="Poll interval in seconds (default: 2.5)")
     daemon_parser.add_argument("--cooldown", type=float, default=45.0, help="Idle cooldown buffer in seconds (default: 45.0)")
+    daemon_parser.add_argument("--no-clamshell", action="store_true", help="Disable lid-closed sleep prevention")
 
     # status
-    subparsers.add_parser("status", help="Show current live status of detectors and screen assertion")
+    subparsers.add_parser("status", help="Show current live status of detectors, thermal guard, and assertions")
+
+    # thermal
+    subparsers.add_parser("thermal", help="Show detailed thermal state and CPU throttling diagnostics")
+
+    # setup-sudo
+    subparsers.add_parser("setup-sudo", help="Configure passwordless pmset sudoers for lid-close sleep guard")
 
     # ping
     ping_parser = subparsers.add_parser("ping", help="Record an active prompt turn for an agent")
@@ -181,13 +281,13 @@ def main() -> None:
     done_parser.add_argument("agent", choices=["antigravity", "claude", "codex", "custom"], help="Agent identifier")
 
     # on
-    subparsers.add_parser("on", help="Manually force screen awake")
+    subparsers.add_parser("on", help="Manually force screen and system awake")
 
     # off
     subparsers.add_parser("off", help="Release manual force awake")
 
     # wrap
-    wrap_parser = subparsers.add_parser("wrap", help="Wrap a command to keep display awake while it runs")
+    wrap_parser = subparsers.add_parser("wrap", help="Wrap a command to keep system awake while it runs")
     wrap_parser.add_argument("--agent", choices=["antigravity", "claude", "codex"], default="claude", help="Agent name")
     wrap_parser.add_argument("command", nargs=argparse.REMAINDER, help="Command to execute")
 
@@ -197,6 +297,10 @@ def main() -> None:
         cmd_daemon(args)
     elif args.command == "status":
         cmd_status(args)
+    elif args.command == "thermal":
+        cmd_thermal(args)
+    elif args.command == "setup-sudo":
+        cmd_setup_sudo(args)
     elif args.command == "ping":
         cmd_ping(args)
     elif args.command == "done":
@@ -208,7 +312,6 @@ def main() -> None:
     elif args.command == "wrap":
         cmd_wrap(args)
     else:
-        # Default action is status
         cmd_status(args)
 
 

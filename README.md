@@ -13,6 +13,7 @@
   <img src="https://img.shields.io/badge/Build-Passing-brightgreen?style=for-the-badge&logo=apple" alt="Build Status" />
   <img src="https://img.shields.io/badge/Tests-100%25%20Passed-success?style=for-the-badge&logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/Platform-macOS%20Apple%20Silicon%20%26%20Intel-blue?style=for-the-badge&logo=apple" alt="Platform" />
+  <img src="https://img.shields.io/badge/Thermal-Protected-red?style=for-the-badge&logo=apple" alt="Thermal Guard" />
   <img src="https://img.shields.io/badge/Firebase-hopem--software--cloud-orange?style=for-the-badge&logo=firebase" alt="Firebase" />
   <img src="https://img.shields.io/badge/License-11Hopem%20Proprietary-blueviolet?style=for-the-badge" alt="License" />
 </p>
@@ -20,12 +21,14 @@
 ---
 
 ## 1. Project Title, Badges & Vision
-`mac-anti-sleep` (`ai-sleep-guard`) is a specialized macOS system daemon that guarantees your Mac display will **never sleep or turn black while AI agent prompts are running**. It natively monitors:
+`mac-anti-sleep` (`ai-sleep-guard`) is a specialized macOS system daemon that guarantees your Mac will **never sleep while AI agent prompts are running**, even if the laptop lid is closed. It natively monitors:
 1. **Google Antigravity (Burda):** Active conversation turns, tool calls, and streaming responses in Antigravity IDE.
 2. **Claude Code:** Prompts, shell commands, and subagent runs via native lifecycle hooks and process inspection.
 3. **OpenAI Codex:** Active code generation, tool calls, and turns via SQLite WAL updates and notify wrappers.
 
-When an AI prompt begins, the daemon immediately creates an active display assertion (`caffeinate -d -i`). Once all prompts conclude, it enforces a gentle **45-second cooldown buffer** before restoring macOS's default power-saving sleep timer.
+When an AI prompt begins, the daemon immediately creates system and display power assertions (`caffeinate -d -i`) and low-level clamshell assertions (`pmset -a disablesleep 1`). Once all prompts conclude, it enforces a gentle **45-second cooldown buffer** before restoring macOS's default power-saving sleep timer (`pmset -a disablesleep 0`), allowing closed laptops to sleep immediately.
+
+Crucially, it incorporates a **Thermal Safety Guard**: if CPU temperatures or thermal pressure reach dangerous levels (`NSProcessInfoThermalStateSerious` or `Critical`), it automatically halts active prompt processes (`SIGINT`), clears sleep assertions, sends an emergency desktop notification, and allows hardware to cool down.
 
 ---
 
@@ -40,30 +43,32 @@ When an AI prompt begins, the daemon immediately creates an active display asser
 
 ## 3. Real-World Operational Context
 - **Target Workstation:** macOS Developer Environment running Antigravity IDE, Claude Code CLI, and Codex CLI.
-- **Problem Solved:** When AI models execute long-running prompts, deep reasoning chains, or extensive multi-file tool invocations, the developer often steps away from the keyboard. macOS display sleep timeouts (5–30 minutes) dim the screen, trigger screensavers, or lock the workstation, interrupting observation and workflow continuity.
-- **Solution:** A zero-configuration, zero-dependency background LaunchAgent that detects prompt states across all 3 AI environments and maintains uninterrupted screen visibility.
+- **Problem Solved:** When AI models execute long-running prompts, deep reasoning chains, or extensive multi-file tool invocations, the developer often steps away or closes the laptop lid. By default, closing the lid triggers hardware clamshell sleep, killing tasks prematurely.
+- **Solution:** A zero-configuration, zero-dependency background LaunchAgent that manages both idle assertions and clamshell sleep settings, with hardware thermal protection to prevent overheating.
 
 ---
 
 ## 4. Key Features & Interactive Capabilities
 - **Multi-Agent Active Prompt Tracking:**
-  - **Antigravity:** Real-time read-only inspection of `~/.gemini/antigravity/conversation_summaries.db` for `CASCADE_RUN_STATUS_RUNNING` and `not_fully_idle = 1`, plus recent brain transcript updates.
+  - **Antigravity:** Real-time read-only inspection of `~/.gemini/antigravity/conversation_summaries.db` for `CASCADE_RUN_STATUS_RUNNING` and `not_fully_idle = 1`.
   - **Claude Code:** Hooked into `UserPromptSubmit`, `PreToolUse`, `SubagentStart`, `Stop`, and `SessionEnd` in `~/.claude/settings.json`.
   - **OpenAI Codex:** Hooked into `notify` in `~/.codex/config.toml` alongside active SQLite WAL monitoring.
-- **Zero-Dependency Core:** Built 100% on Python 3 standard library (`sqlite3`, `subprocess`, `os`, `signal`, `urllib`).
-- **macOS Native Caffeinate Integration:** Calls `/usr/bin/caffeinate -d -i` to create legitimate system assertions (`PreventUserIdleDisplaySleep` and `PreventUserIdleSystemSleep`).
+- **Clamshell (Lid-Closed) Sleep Guard:**
+  - Automatically manages `pmset -a disablesleep 1` while prompts are executing.
+  - Automatically restores `pmset -a disablesleep 0` when prompts finish and cooldown expires, so a closed MacBook sleeps naturally.
+- **Thermal Safety Guard & Emergency Halt:**
+  - Continuously monitors macOS thermal pressure using Apple's official `NSProcessInfo.thermalState` API.
+  - If temperatures exceed safe thresholds (`Serious` or `Critical`), it immediately halts prompt processes, releases power assertions, posts an alert notification, and prevents thermal damage.
+- **Zero-Dependency Core:** Built 100% on Python 3 standard library (`ctypes`, `sqlite3`, `subprocess`, `os`, `signal`, `urllib`).
+- **macOS Native Caffeinate Integration:** Calls `/usr/bin/caffeinate -d -i` to create legitimate system assertions.
 - **Intelligent 45s Cooldown Buffer:** Prevents flickering display power cycles between consecutive agent turns.
-- **Rich Status CLI:** Terminal dashboard with ANSI color badges displaying live detector statuses and active PIDs.
-- **Manual Overrides:** Quick `ai-sleep-guard on` and `ai-sleep-guard off` commands for ad-hoc presentations or downloads.
+- **Rich Status CLI:** Terminal dashboard with ANSI color badges displaying live detector statuses, thermal state, and active PIDs.
 
 ---
 
 ## 5. Architecture, Tech Stack & Directory Tree
 ```
 mac-anti-sleep/
-├── AGENTS.md                          # Engineering blueprint and standards
-├── CLAUDE.md                          # Claude Code unified rule link
-├── WORKLOG.md                         # Detailed AI Handoff changelog
 ├── README.md                          # Rich 10-section documentation
 ├── .gitignore                         # Strict exclusion rules
 ├── com.11hopem.ai-sleep-guard.plist    # macOS LaunchAgent definition
@@ -71,6 +76,7 @@ mac-anti-sleep/
 │   └── images/logo.svg                # 1:1 Vector brand mark
 ├── scripts/
 │   ├── ai-sleep-guard                 # Main CLI launcher
+│   ├── setup_sudo.sh                  # Sudoers configuration for pmset
 │   ├── codex_notify.sh                # Codex notification bridge
 │   ├── install.sh                     # Automated installer
 │   └── uninstall.sh                   # Clean uninstaller
@@ -78,17 +84,21 @@ mac-anti-sleep/
 │   ├── __init__.py
 │   ├── cli.py                         # CLI argument dispatcher
 │   ├── daemon.py                      # Continuous monitoring engine
-│   ├── caffeinate_manager.py          # Process & assertion lifecycle
+│   ├── caffeinate_manager.py          # Caffeinate process & assertion lifecycle
+│   ├── clamshell_manager.py           # Low-level pmset disablesleep manager
+│   ├── thermal.py                     # NSProcessInfo thermal safety guard
 │   ├── telemetry.py                   # Firestore & local audit logger
 │   └── detectors/
 │       ├── __init__.py
-│       ├── base.py                    # Base utilities
+│       ├── base.py                    # Base signal & process utilities
 │       ├── antigravity.py             # Antigravity SQLite detector
 │       ├── claude.py                  # Claude Code hook & process detector
 │       └── codex.py                   # Codex WAL & notify detector
 ├── tests/
 │   ├── test_detectors.py              # Detector unit test suite
 │   ├── test_caffeinate_manager.py     # Caffeinate manager test suite
+│   ├── test_clamshell_manager.py      # Clamshell manager test suite
+│   ├── test_thermal.py                # Thermal safety guard test suite
 │   ├── test_telemetry.py              # Telemetry test suite
 │   └── test_cli.py                    # CLI command test suite
 └── data/
@@ -99,18 +109,20 @@ mac-anti-sleep/
 
 ## 6. Security, Anti-Bot & Isolation Shield
 - **100% Read-Only Database Queries:** Antigravity and Codex databases are queried using SQLite URI read-only immutable mode (`file:...db?mode=ro`) with 1.0-second timeouts, guaranteeing zero database locks or write conflicts.
+- **Strict Sudoers Scope:** Only `pmset -a disablesleep` and `pmset sleepnow` are permitted in `/etc/sudoers.d/ai-sleep-guard` with `0440` permissions.
 - **Local Data Custody:** Telemetry is written to local JSON Lines first before any network transmission.
-- **Clean Signal Isolation:** Inter-process signals use secure, isolated temporary files in `/tmp/ai_sleep_guard/`.
-- **Zero Credentials in Repository:** No API keys or tokens are stored in the codebase; all communications use public endpoints or local CLI tooling.
+- **Clean Signal Isolation:** Inter-process signals use secure user-owned directories in `~/.local/state/ai_sleep_guard/`.
 
 ---
 
 ## 7. Firebase Telemetry & Live Metrics
 Every state change is captured locally in `data/telemetry_logs.jsonl` and mirrored to Cloud Firestore REST (`hopem-software-cloud`):
 - `DAEMON_START`: Daemon initialization parameters.
-- `CAFFEINATE_START`: Triggered when an AI prompt starts; records PID, flags, and activating agent.
-- `CAFFEINATE_STOP`: Triggered when prompts conclude and cooldown expires; records total duration.
-- `PROMPT_ACTIVE`: Agent prompt detection events.
+- `CAFFEINATE_START`: Triggered when an AI prompt starts.
+- `CAFFEINATE_STOP`: Triggered when prompts conclude and cooldown expires.
+- `CLAMSHELL_SLEEP_ENABLE`: Lid-close sleep prevention enabled for active turn.
+- `CLAMSHELL_SLEEP_DISABLE`: Lid-close sleep restored to default.
+- `THERMAL_EMERGENCY_HALT`: High-priority alert when temperature threshold is exceeded.
 
 ---
 
@@ -127,9 +139,17 @@ cd /Users/umut/mycodespaces/mac-anti-sleep
 bash scripts/install.sh
 ```
 
-### Checking Live Status
+### Enable Lid-Close Sleep Prevention (One-Time Setup)
+```bash
+ai-sleep-guard setup-sudo
+# Or execute:
+bash scripts/setup_sudo.sh
+```
+
+### Checking Live Status & Thermal Diagnostics
 ```bash
 ai-sleep-guard status
+ai-sleep-guard thermal
 ```
 
 ### Running Automated Tests
@@ -139,9 +159,9 @@ python3 -m unittest discover -s tests -v
 
 ### Manual Overrides
 ```bash
-ai-sleep-guard on       # Force display awake
+ai-sleep-guard on       # Force system awake
 ai-sleep-guard off      # Restore normal sleep
-ai-sleep-guard wrap npm run build   # Keep display awake while command runs
+ai-sleep-guard wrap npm run build   # Keep system awake while command runs
 ```
 
 ---
