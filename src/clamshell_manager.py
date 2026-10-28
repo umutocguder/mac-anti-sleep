@@ -22,12 +22,13 @@ logger = logging.getLogger(__name__)
 class ClamshellManager:
     """Manages low-level macOS clamshell sleep settings via pmset."""
 
-    def __init__(self):
+    def __init__(self, auto_restore: bool = False):
         self.clamshell_active: bool = False
         self._sudo_available: Optional[bool] = None
 
-        # Clean up low-level assertion on process shutdown
-        atexit.register(self.restore_defaults)
+        # Clean up low-level assertion on process shutdown only if explicitly requested
+        if auto_restore:
+            atexit.register(self.restore_defaults)
 
     def can_manage_clamshell(self) -> bool:
         """Checks if passwordless sudo access for pmset is available."""
@@ -100,8 +101,8 @@ class ClamshellManager:
             return False
 
     def restore_defaults(self) -> None:
-        """Restores normal sleep settings before shutdown."""
-        if self.clamshell_active or self.is_clamshell_sleep_disabled():
+        """Restores normal sleep settings before shutdown if this instance activated it."""
+        if self.clamshell_active:
             try:
                 subprocess.run(
                     ["sudo", "-n", "/usr/bin/pmset", "-a", "disablesleep", "0"],

@@ -49,7 +49,7 @@ class SleepGuardDaemon:
         self.enable_clamshell = enable_clamshell
 
         self.caffeinate_manager = CaffeinateManager(default_cooldown_seconds=cooldown_seconds)
-        self.clamshell_manager = ClamshellManager()
+        self.clamshell_manager = ClamshellManager(auto_restore=True)
         self.thermal_guard = ThermalGuard()
         self.running = False
 
