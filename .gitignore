@@ -86,3 +86,6 @@ data/*.sqlite
 logs/
 *.log
 /tmp/
+
+# graphify generated knowledge graph
+graphify-out/
